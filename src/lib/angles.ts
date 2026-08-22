@@ -71,6 +71,33 @@ export function kneeAngleForLeg(landmarks: Point3D[], leg: Leg): number {
   return calculateAngle(hip, knee, ankle);
 }
 
+function distance3D(a: Point3D, b: Point3D): number {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+}
+
+export interface LegSegmentLengths {
+  thigh: number;
+  shin: number;
+}
+
+/** Hip-to-knee (thigh) and knee-to-ankle (shin) bone lengths, in world-landmark meters. */
+export function legSegmentLengths(landmarks: Point3D[], leg: Leg): LegSegmentLengths {
+  const hip = landmarks[leg === "left" ? POSE_LANDMARKS.LEFT_HIP : POSE_LANDMARKS.RIGHT_HIP];
+  const knee = landmarks[leg === "left" ? POSE_LANDMARKS.LEFT_KNEE : POSE_LANDMARKS.RIGHT_KNEE];
+  const ankle = landmarks[leg === "left" ? POSE_LANDMARKS.LEFT_ANKLE : POSE_LANDMARKS.RIGHT_ANKLE];
+  return { thigh: distance3D(hip, knee), shin: distance3D(knee, ankle) };
+}
+
+/**
+ * How far (as a fraction) a frame's thigh/shin length may drift from the
+ * session's established reference before we treat the frame as an unreliable
+ * detection rather than real movement. Bone length can't actually change
+ * during a squat, so a jump here means a landmark got misplaced — most often
+ * because an arm swung in front of the knee/ankle and occluded it — not that
+ * the person moved. Provisional, pending real human-test feedback.
+ */
+export const LEG_LENGTH_TOLERANCE = 0.3;
+
 /** knee-to-knee horizontal distance / ankle-to-ankle horizontal distance, in image space. */
 export function kneeValgusRatio(landmarks: Point3D[]): number {
   const leftKnee = landmarks[POSE_LANDMARKS.LEFT_KNEE];

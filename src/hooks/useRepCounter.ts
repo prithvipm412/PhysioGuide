@@ -1,13 +1,16 @@
 import { useCallback, useRef, useState } from "react";
 import {
+  LEG_LENGTH_TOLERANCE,
   MovingAverage,
   PROCESSING_VISIBILITY_FLOOR,
   VISIBILITY_THRESHOLD,
   kneeAngleForLeg,
   kneeValgusRatio,
+  legSegmentLengths,
   lowerBodyVisibilityScore,
   pickMoreVisibleLeg,
   type Leg,
+  type LegSegmentLengths,
   type Point3D,
 } from "../lib/angles";
 import {
@@ -39,6 +42,10 @@ export function useRepCounter() {
   // between legs can't feed the smoother two different physical angles
   // mid-rep. Only re-evaluated while at rest ("standing").
   const lockedLegRef = useRef<Leg | null>(null);
+  // Established while standing (arms typically at rest, pose most stable) and
+  // used to reject frames where a landmark got occluded mid-rep — e.g. an arm
+  // swinging in front of the knee — since real bone length can't change.
+  const referenceLegLengthRef = useRef<LegSegmentLengths | null>(null);
 
   /**
    * `active` gates only the rep-counting logic (state machine, angle
@@ -55,7 +62,23 @@ export function useRepCounter() {
     if (stateRef.current.phase === "standing" || !lockedLegRef.current) {
       lockedLegRef.current = pickMoreVisibleLeg(landmarks);
     }
-    const rawAngle = kneeAngleForLeg(landmarks, lockedLegRef.current);
+    const leg = lockedLegRef.current;
+
+    const { thigh, shin } = legSegmentLengths(landmarks, leg);
+    const reference = referenceLegLengthRef.current;
+    if (stateRef.current.phase === "standing") {
+      referenceLegLengthRef.current = reference
+        ? { thigh: reference.thigh * 0.9 + thigh * 0.1, shin: reference.shin * 0.9 + shin * 0.1 }
+        : { thigh, shin };
+    } else if (reference) {
+      const thighOff = Math.abs(thigh - reference.thigh) / reference.thigh;
+      const shinOff = Math.abs(shin - reference.shin) / reference.shin;
+      if (thighOff > LEG_LENGTH_TOLERANCE || shinOff > LEG_LENGTH_TOLERANCE) {
+        return; // landmark almost certainly occluded/misplaced this frame — skip it
+      }
+    }
+
+    const rawAngle = kneeAngleForLeg(landmarks, leg);
     const smoothedAngle = movingAverageRef.current.add(rawAngle);
     const valgusRatio = kneeValgusRatio(landmarks);
 
@@ -77,6 +100,7 @@ export function useRepCounter() {
     stateRef.current = initialSquatState;
     movingAverageRef.current.reset();
     lockedLegRef.current = null;
+    referenceLegLengthRef.current = null;
     setPhase("standing");
     setKneeAngle(180);
     setReps([]);
