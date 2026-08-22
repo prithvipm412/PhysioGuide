@@ -22,6 +22,8 @@ export interface Point3D {
 
 /** MediaPipe Pose landmark indices relevant to the squat check. */
 export const POSE_LANDMARKS = {
+  LEFT_SHOULDER: 11,
+  RIGHT_SHOULDER: 12,
   LEFT_HIP: 23,
   RIGHT_HIP: 24,
   LEFT_KNEE: 25,
@@ -97,6 +99,33 @@ export function legSegmentLengths(landmarks: Point3D[], leg: Leg): LegSegmentLen
  * the person moved. Provisional, pending real human-test feedback.
  */
 export const LEG_LENGTH_TOLERANCE = 0.3;
+
+/**
+ * Vertical (world Y) distance from shoulder midpoint to ankle midpoint — a
+ * proxy for "how tall the person is standing right now". Knee-angle depth
+ * detection gets noisy from a frontal camera view (the thigh/shin foreshorten
+ * along the camera's depth axis, so bend is harder to read), but this vertical
+ * drop stays reliable from any viewing angle since MediaPipe's world
+ * landmarks reconstruct true 3D position, not just the 2D image projection.
+ */
+export function bodyHeightProxy(landmarks: Point3D[]): number {
+  const leftShoulder = landmarks[POSE_LANDMARKS.LEFT_SHOULDER];
+  const rightShoulder = landmarks[POSE_LANDMARKS.RIGHT_SHOULDER];
+  const leftAnkle = landmarks[POSE_LANDMARKS.LEFT_ANKLE];
+  const rightAnkle = landmarks[POSE_LANDMARKS.RIGHT_ANKLE];
+
+  const shoulderMidY = (leftShoulder.y + rightShoulder.y) / 2;
+  const ankleMidY = (leftAnkle.y + rightAnkle.y) / 2;
+  return Math.abs(ankleMidY - shoulderMidY);
+}
+
+/**
+ * Below this fraction of the standing-height reference, the person has
+ * dropped low enough to count as "at depth" — used alongside the knee-angle
+ * bottom threshold so a frontal camera (where knee angle is unreliable) can
+ * still detect real depth. Provisional, pending real human-test feedback.
+ */
+export const HEIGHT_DROP_RATIO = 0.85;
 
 /** knee-to-knee horizontal distance / ankle-to-ankle horizontal distance, in image space. */
 export function kneeValgusRatio(landmarks: Point3D[]): number {

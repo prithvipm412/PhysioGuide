@@ -1,9 +1,11 @@
 import { useCallback, useRef, useState } from "react";
 import {
+  HEIGHT_DROP_RATIO,
   LEG_LENGTH_TOLERANCE,
   MovingAverage,
   PROCESSING_VISIBILITY_FLOOR,
   VISIBILITY_THRESHOLD,
+  bodyHeightProxy,
   kneeAngleForLeg,
   kneeValgusRatio,
   legSegmentLengths,
@@ -14,6 +16,7 @@ import {
   type Point3D,
 } from "../lib/angles";
 import {
+  THRESHOLDS,
   initialSquatState,
   stepSquatStateMachine,
   type CompletedRep,
@@ -46,6 +49,10 @@ export function useRepCounter() {
   // used to reject frames where a landmark got occluded mid-rep — e.g. an arm
   // swinging in front of the knee — since real bone length can't change.
   const referenceLegLengthRef = useRef<LegSegmentLengths | null>(null);
+  // Standing-height reference (shoulder-to-ankle) for the body-height depth
+  // signal, and a separate smoother so it isn't blended with the angle signal.
+  const referenceHeightRef = useRef<number | null>(null);
+  const heightMovingAverageRef = useRef(new MovingAverage(5));
 
   /**
    * `active` gates only the rep-counting logic (state machine, angle
@@ -82,10 +89,25 @@ export function useRepCounter() {
     const smoothedAngle = movingAverageRef.current.add(rawAngle);
     const valgusRatio = kneeValgusRatio(landmarks);
 
+    const height = bodyHeightProxy(landmarks);
+    if (stateRef.current.phase === "standing") {
+      referenceHeightRef.current = referenceHeightRef.current
+        ? referenceHeightRef.current * 0.9 + height * 0.1
+        : height;
+    }
+    const heightRatio = referenceHeightRef.current ? height / referenceHeightRef.current : 1;
+    const smoothedHeightRatio = heightMovingAverageRef.current.add(heightRatio);
+
+    // Either signal reaching depth is enough — knee angle from the side,
+    // body-height drop from the front, so depth detection works either way.
+    const atDepth =
+      smoothedAngle < THRESHOLDS.BOTTOM_ANGLE || smoothedHeightRatio < HEIGHT_DROP_RATIO;
+
     const { state, completedRep } = stepSquatStateMachine(
       stateRef.current,
       smoothedAngle,
-      valgusRatio
+      valgusRatio,
+      atDepth
     );
     stateRef.current = state;
 
@@ -99,8 +121,10 @@ export function useRepCounter() {
   const reset = useCallback(() => {
     stateRef.current = initialSquatState;
     movingAverageRef.current.reset();
+    heightMovingAverageRef.current.reset();
     lockedLegRef.current = null;
     referenceLegLengthRef.current = null;
+    referenceHeightRef.current = null;
     setPhase("standing");
     setKneeAngle(180);
     setReps([]);

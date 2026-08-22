@@ -38,15 +38,18 @@ export interface SquatStepResult {
 
 /**
  * One state-machine step. `kneeValgusRatio` should be the current frame's
- * knee-to-knee / ankle-to-ankle ratio; it's only consulted while in the
- * "bottom" phase (the check is defined "at the bottom of the rep").
+ * knee-to-knee / ankle-to-ankle ratio; it's only consulted while at depth
+ * (the check is defined "at the bottom of the rep"). `atDepth` is a combined
+ * signal (knee angle OR body-height drop) so depth detection stays reliable
+ * regardless of camera angle — knee angle alone is noisy from a frontal view.
  */
 export function stepSquatStateMachine(
   state: SquatState,
   smoothedKneeAngle: number,
-  currentKneeValgusRatio: number
+  currentKneeValgusRatio: number,
+  atDepth: boolean
 ): SquatStepResult {
-  const { STANDING_ANGLE, BOTTOM_ANGLE, KNEE_VALGUS_RATIO } = THRESHOLDS;
+  const { STANDING_ANGLE, KNEE_VALGUS_RATIO } = THRESHOLDS;
 
   switch (state.phase) {
     case "standing": {
@@ -67,7 +70,7 @@ export function stepSquatStateMachine(
     case "descending": {
       const minAngleThisRep = Math.min(state.minAngleThisRep, smoothedKneeAngle);
 
-      if (smoothedKneeAngle < BOTTOM_ANGLE) {
+      if (atDepth) {
         const kneeValgusFlagged =
           state.kneeValgusFlagged || currentKneeValgusRatio < KNEE_VALGUS_RATIO;
         return {
@@ -77,7 +80,7 @@ export function stepSquatStateMachine(
       }
 
       if (smoothedKneeAngle > STANDING_ANGLE) {
-        // Went back up without ever reaching the bottom threshold — a shallow rep.
+        // Went back up without ever reaching depth — a shallow rep.
         return {
           state: { ...initialSquatState },
           completedRep: {
@@ -96,7 +99,7 @@ export function stepSquatStateMachine(
       const kneeValgusFlagged =
         state.kneeValgusFlagged || currentKneeValgusRatio < KNEE_VALGUS_RATIO;
 
-      if (smoothedKneeAngle > BOTTOM_ANGLE) {
+      if (!atDepth) {
         return {
           state: { phase: "ascending", reachedBottom: true, kneeValgusFlagged, minAngleThisRep },
           completedRep: null,
@@ -112,7 +115,7 @@ export function stepSquatStateMachine(
     case "ascending": {
       const minAngleThisRep = Math.min(state.minAngleThisRep, smoothedKneeAngle);
 
-      if (smoothedKneeAngle < BOTTOM_ANGLE) {
+      if (atDepth) {
         // Dipped back down (flicker near the bottom threshold) — back to "bottom".
         return {
           state: { ...state, phase: "bottom", minAngleThisRep },
