@@ -1,5 +1,17 @@
-/** Below this best-leg average visibility, treat the pose as unreliable (e.g. body not fully in frame). */
+/** Below this best-leg average visibility, show the "step back" guidance in the UI. */
 export const VISIBILITY_THRESHOLD = 0.5;
+
+/**
+ * Below this (much lower) floor, landmarks are essentially not detected at all
+ * (e.g. genuinely out of frame) and we skip rep-counting entirely to avoid
+ * feeding garbage into the state machine. Above the floor but below
+ * VISIBILITY_THRESHOLD, we still process frames — MediaPipe's per-landmark
+ * confidence legitimately dips at extreme joint angles (e.g. ankles at the
+ * bottom of a squat, viewed from a 30-40deg angle) even when the position is
+ * still usable, and gating on the stricter threshold there was dropping
+ * whole reps right at the bottom of the squat.
+ */
+export const PROCESSING_VISIBILITY_FLOOR = 0.15;
 
 export interface Point3D {
   x: number;

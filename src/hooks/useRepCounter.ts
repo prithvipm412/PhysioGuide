@@ -1,11 +1,13 @@
 import { useCallback, useRef, useState } from "react";
 import {
   MovingAverage,
+  PROCESSING_VISIBILITY_FLOOR,
   VISIBILITY_THRESHOLD,
   kneeAngleForLeg,
   kneeValgusRatio,
   lowerBodyVisibilityScore,
   pickMoreVisibleLeg,
+  type Leg,
   type Point3D,
 } from "../lib/angles";
 import {
@@ -33,15 +35,27 @@ export function useRepCounter() {
 
   const stateRef = useRef(initialSquatState);
   const movingAverageRef = useRef(new MovingAverage(5));
+  // Locked for the duration of a rep so a frame-to-frame visibility flicker
+  // between legs can't feed the smoother two different physical angles
+  // mid-rep. Only re-evaluated while at rest ("standing").
+  const lockedLegRef = useRef<Leg | null>(null);
 
-  const processFrame = useCallback((landmarks: Point3D[]) => {
+  /**
+   * `active` gates only the rep-counting logic (state machine, angle
+   * smoothing, leg lock) — visibility is always measured and published so the
+   * "step back" guidance works before a session starts, while movement during
+   * idle/countdown (e.g. walking into position) can't corrupt the state
+   * machine before the first real rep.
+   */
+  const processFrame = useCallback((landmarks: Point3D[], active: boolean) => {
     const visibility = lowerBodyVisibilityScore(landmarks);
-    const visible = visibility >= VISIBILITY_THRESHOLD;
-    setIsBodyVisible(visible);
-    if (!visible) return;
+    setIsBodyVisible(visibility >= VISIBILITY_THRESHOLD);
+    if (!active || visibility < PROCESSING_VISIBILITY_FLOOR) return;
 
-    const leg = pickMoreVisibleLeg(landmarks);
-    const rawAngle = kneeAngleForLeg(landmarks, leg);
+    if (stateRef.current.phase === "standing" || !lockedLegRef.current) {
+      lockedLegRef.current = pickMoreVisibleLeg(landmarks);
+    }
+    const rawAngle = kneeAngleForLeg(landmarks, lockedLegRef.current);
     const smoothedAngle = movingAverageRef.current.add(rawAngle);
     const valgusRatio = kneeValgusRatio(landmarks);
 
@@ -62,6 +76,7 @@ export function useRepCounter() {
   const reset = useCallback(() => {
     stateRef.current = initialSquatState;
     movingAverageRef.current.reset();
+    lockedLegRef.current = null;
     setPhase("standing");
     setKneeAngle(180);
     setReps([]);

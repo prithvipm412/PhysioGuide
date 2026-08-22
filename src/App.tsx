@@ -1,10 +1,15 @@
 import type { PoseLandmarker } from "@mediapipe/tasks-vision";
+import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraFeed } from "./components/CameraFeed";
 import { PoseOverlay, type FormStatusColor } from "./components/PoseOverlay";
 import { useRepCounter } from "./hooks/useRepCounter";
 import type { Point3D } from "./lib/angles";
 import { getPoseLandmarker } from "./lib/poseLandmarker";
+
+const COUNTDOWN_SECONDS = 5;
+
+type SessionState = "idle" | "countdown" | "active";
 
 // Live red/amber error-driven coloring lands in Phase 3 (form-error rules);
 // for now the skeleton just reflects rep phase so Phase 1/2 stay in scope.
@@ -25,6 +30,34 @@ export default function App() {
   const [fps, setFps] = useState(0);
 
   const repCounter = useRepCounter();
+
+  const [sessionState, setSessionState] = useState<SessionState>("idle");
+  const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
+
+  const startSession = useCallback(() => {
+    setCountdown(COUNTDOWN_SECONDS);
+    setSessionState("countdown");
+  }, []);
+
+  const endSession = useCallback(() => {
+    setSessionState("idle");
+    repCounter.reset();
+    // Depending on repCounter.reset (stable via useCallback) rather than the whole
+    // repCounter object, which is a new reference every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repCounter.reset]);
+
+  useEffect(() => {
+    if (sessionState !== "countdown") return;
+    if (countdown <= 0) {
+      repCounter.reset();
+      setSessionState("active");
+      return;
+    }
+    const timer = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState, countdown, repCounter.reset]);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,7 +95,7 @@ export default function App() {
         const world = result.worldLandmarks[0] ?? null;
 
         setDrawLandmarks(normalized);
-        if (world) repCounter.processFrame(world);
+        if (world) repCounter.processFrame(world, sessionState === "active");
 
         frameCount++;
         const now = performance.now();
@@ -79,9 +112,10 @@ export default function App() {
     return () => cancelAnimationFrame(rafId);
     // Depending on repCounter.processFrame (stable via useCallback) rather than the
     // whole repCounter object, which is a new reference every render and would
-    // otherwise restart this rAF loop on every processed frame.
+    // otherwise restart this rAF loop on every processed frame. sessionState is
+    // fine to depend on directly — it only changes a few times per session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [landmarker, videoReady, repCounter.processFrame]);
+  }, [landmarker, videoReady, repCounter.processFrame, sessionState]);
 
   const lastRep = repCounter.reps[repCounter.reps.length - 1];
   const statusColor = statusColorForPhase(repCounter.phase);
@@ -123,6 +157,41 @@ export default function App() {
             </div>
           )}
 
+          {landmarker && !modelError && videoReady && sessionState === "idle" && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="absolute inset-0 flex items-center justify-center bg-black/50"
+            >
+              <motion.button
+                type="button"
+                onClick={startSession}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                className="bg-[var(--color-accent)] text-white text-lg font-semibold px-8 py-4 rounded-2xl shadow-lg"
+              >
+                Start Session
+              </motion.button>
+            </motion.div>
+          )}
+
+          {sessionState === "countdown" && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+              <AnimatePresence mode="wait">
+                <motion.p
+                  key={countdown}
+                  initial={{ opacity: 0, scale: 0.5 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 1.4 }}
+                  transition={{ duration: 0.35 }}
+                  className="text-white text-8xl font-bold"
+                >
+                  {countdown > 0 ? countdown : "Go!"}
+                </motion.p>
+              </AnimatePresence>
+            </div>
+          )}
+
           <div className="absolute top-4 left-4 bg-black/60 text-white text-xs font-mono px-2 py-1 rounded">
             {fps} fps · {repCounter.phase} · {Math.round(repCounter.kneeAngle)}°
           </div>
@@ -154,13 +223,15 @@ export default function App() {
             <p>Use even lighting and keep other people out of frame.</p>
           </div>
 
-          <button
-            type="button"
-            onClick={repCounter.reset}
-            className="mt-auto bg-[var(--color-accent)] text-white font-semibold py-3 rounded-2xl"
-          >
-            Reset Session
-          </button>
+          {sessionState === "active" && (
+            <button
+              type="button"
+              onClick={endSession}
+              className="mt-auto bg-[var(--color-accent)] text-white font-semibold py-3 rounded-2xl"
+            >
+              End Session
+            </button>
+          )}
         </aside>
       </main>
     </div>
